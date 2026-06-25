@@ -18,8 +18,8 @@ import type {
   ProcedureSlice,
   SectorSpend,
 } from '@sigma/api-contract';
-import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
-import { cleanName, entityName, parseConsortiumMembers } from '@sigma/shared';
+import { CPV_SECTORS, PROCEDURE_GROUPS, pickLabel, procedureGroup } from '@sigma/config';
+import { cleanName, entityName, parseConsortiumMembers, type Locale } from '@sigma/shared';
 import { listContracts } from './contracts';
 import { authoritySlug, companySlug, contractSlug } from './identity';
 import { typeLabel } from './rows';
@@ -47,7 +47,7 @@ interface ProcRow {
 }
 
 /** Fold scoped per-procedure_type counts into the 7 config groups → StackedBar slices. */
-function toProcedureMix(rows: ProcRow[]): ProcedureSlice[] {
+function toProcedureMix(rows: ProcRow[], locale: Locale): ProcedureSlice[] {
   const total = rows.reduce((s, r) => s + (r.eur ?? 0), 0);
   const byGroup = new Map<string, { contracts: number; valueEur: number }>();
   for (const r of rows) {
@@ -63,7 +63,7 @@ function toProcedureMix(rows: ProcRow[]): ProcedureSlice[] {
     if (!agg || agg.valueEur <= 0) continue;
     out.push({
       key: g.key,
-      label: g.label,
+      label: pickLabel(g, locale),
       color: g.color,
       competitive: g.competitive,
       contracts: agg.contracts,
@@ -93,7 +93,11 @@ interface CompanyTotalsFull {
   last_date: string | null;
 }
 
-export async function getCompany(db: D1Database, bidderId: string): Promise<CompanyDetail | null> {
+export async function getCompany(
+  db: D1Database,
+  bidderId: string,
+  locale: Locale,
+): Promise<CompanyDetail | null> {
   const row = await db
     .prepare(`SELECT * FROM company_totals WHERE bidder_id = ?`)
     .bind(bidderId)
@@ -102,57 +106,57 @@ export async function getCompany(db: D1Database, bidderId: string): Promise<Comp
 
   const [bidderMeta, extra, topAuth, procRows, bidsRow, suspectRow, top, recent] =
     await Promise.all([
-    db
-      .prepare(
-        `SELECT b.legal_form, n.nuts3_name AS region FROM bidders b
+      db
+        .prepare(
+          `SELECT b.legal_form, n.nuts3_name AS region FROM bidders b
          LEFT JOIN nuts_regions n ON n.nuts3 = b.nuts WHERE b.id = ?`,
-      )
-      .bind(bidderId)
-      .first<{ legal_form: string | null; region: string | null }>(),
-    db
-      .prepare(
-        `SELECT SUM(CASE WHEN substr(t.cpv_code,1,2) = ? THEN c.amount_eur ELSE 0 END) AS primary_eur,
+        )
+        .bind(bidderId)
+        .first<{ legal_form: string | null; region: string | null }>(),
+      db
+        .prepare(
+          `SELECT SUM(CASE WHEN substr(t.cpv_code,1,2) = ? THEN c.amount_eur ELSE 0 END) AS primary_eur,
                 AVG(c.bids_received) AS avg_bids
          FROM contracts c JOIN tenders t ON t.id = c.tender_id
          WHERE c.bidder_id = ? AND c.amount_eur IS NOT NULL`,
-      )
-      .bind(row.primary_sector ?? '', bidderId)
-      .first<{ primary_eur: number | null; avg_bids: number | null }>(),
-    db
-      .prepare(
-        `SELECT t.authority_id, a.name, SUM(c.amount_eur) AS paid, COUNT(*) AS n
+        )
+        .bind(row.primary_sector ?? '', bidderId)
+        .first<{ primary_eur: number | null; avg_bids: number | null }>(),
+      db
+        .prepare(
+          `SELECT t.authority_id, a.name, SUM(c.amount_eur) AS paid, COUNT(*) AS n
          FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id
          WHERE c.bidder_id = ? AND c.amount_eur IS NOT NULL
          GROUP BY t.authority_id ORDER BY paid DESC LIMIT 6`,
-      )
-      .bind(bidderId)
-      .all<{ authority_id: string; name: string; paid: number; n: number }>(),
-    db
-      .prepare(
-        `SELECT t.procedure_type, COUNT(*) AS n, SUM(c.amount_eur) AS eur
+        )
+        .bind(bidderId)
+        .all<{ authority_id: string; name: string; paid: number; n: number }>(),
+      db
+        .prepare(
+          `SELECT t.procedure_type, COUNT(*) AS n, SUM(c.amount_eur) AS eur
          FROM contracts c JOIN tenders t ON t.id = c.tender_id
          WHERE c.bidder_id = ? AND c.amount_eur IS NOT NULL GROUP BY t.procedure_type`,
-      )
-      .bind(bidderId)
-      .all<ProcRow>(),
-    db
-      .prepare(
-        `SELECT SUM(CASE WHEN bids_received = 1 THEN 1 ELSE 0 END) AS one,
+        )
+        .bind(bidderId)
+        .all<ProcRow>(),
+      db
+        .prepare(
+          `SELECT SUM(CASE WHEN bids_received = 1 THEN 1 ELSE 0 END) AS one,
                 SUM(CASE WHEN bids_received = 2 THEN 1 ELSE 0 END) AS two,
                 SUM(CASE WHEN bids_received = 3 THEN 1 ELSE 0 END) AS three,
                 SUM(CASE WHEN bids_received >= 4 THEN 1 ELSE 0 END) AS four_plus,
                 SUM(CASE WHEN bids_received IS NULL THEN 1 ELSE 0 END) AS unknown
          FROM contracts WHERE bidder_id = ? AND amount_eur IS NOT NULL`,
-      )
-      .bind(bidderId)
-      .first<{ one: number; two: number; three: number; four_plus: number; unknown: number }>(),
-    db
-      .prepare(`SELECT COUNT(*) AS n FROM contracts WHERE bidder_id = ? AND amount_eur IS NULL`)
-      .bind(bidderId)
-      .first<{ n: number }>(),
-    listContracts(db, { bidder: companySlug(bidderId), sort: 'value-desc', pageSize: 7 }),
-    listContracts(db, { bidder: companySlug(bidderId), sort: 'date-desc', pageSize: 7 }),
-  ]);
+        )
+        .bind(bidderId)
+        .first<{ one: number; two: number; three: number; four_plus: number; unknown: number }>(),
+      db
+        .prepare(`SELECT COUNT(*) AS n FROM contracts WHERE bidder_id = ? AND amount_eur IS NULL`)
+        .bind(bidderId)
+        .first<{ n: number }>(),
+      listContracts(db, { bidder: companySlug(bidderId), sort: 'value-desc', pageSize: 7 }, locale),
+      listContracts(db, { bidder: companySlug(bidderId), sort: 'date-desc', pageSize: 7 }, locale),
+    ]);
 
   const topAuthorities: AuthorityShare[] = topAuth.results.map((a) => ({
     slug: authoritySlug(a.authority_id),
@@ -196,7 +200,7 @@ export async function getCompany(db: D1Database, bidderId: string): Promise<Comp
     wonEur: row.won_eur,
     contracts: row.contracts,
     authorities: row.authorities,
-    sector: sectorRef(row.primary_sector),
+    sector: sectorRef(row.primary_sector, locale),
     sectorSharePct:
       row.won_eur > 0 && extra?.primary_eur != null ? extra.primary_eur / row.won_eur : null,
     euSharePct: row.won_eur > 0 ? row.eu_eur / row.won_eur : 0,
@@ -206,7 +210,7 @@ export async function getCompany(db: D1Database, bidderId: string): Promise<Comp
     suspect: suspectRow?.n ?? 0,
     topAuthorities,
     moreAuthorities: Math.max(0, row.authorities - topAuthorities.length),
-    procedureMix: toProcedureMix(procRows.results),
+    procedureMix: toProcedureMix(procRows.results, locale),
     bids,
     topContracts: top.items,
     recentContracts: recent.items,
@@ -236,6 +240,7 @@ interface AuthorityTotalsFull {
 export async function getAuthority(
   db: D1Database,
   authorityId: string,
+  locale: Locale,
 ): Promise<AuthorityDetail | null> {
   const row = await db
     .prepare(`SELECT * FROM authority_totals WHERE authority_id = ?`)
@@ -290,8 +295,16 @@ export async function getAuthority(
       )
       .bind(authorityId)
       .first<{ n: number }>(),
-    listContracts(db, { authority: authoritySlug(authorityId), sort: 'date-desc', pageSize: 6 }),
-    listContracts(db, { authority: authoritySlug(authorityId), sort: 'value-desc', pageSize: 6 }),
+    listContracts(
+      db,
+      { authority: authoritySlug(authorityId), sort: 'date-desc', pageSize: 6 },
+      locale,
+    ),
+    listContracts(
+      db,
+      { authority: authoritySlug(authorityId), sort: 'value-desc', pageSize: 6 },
+      locale,
+    ),
   ]);
 
   const topContractors: CompanyShare[] = topComp.results.map((c) => ({
@@ -307,7 +320,7 @@ export async function getAuthority(
   // Sectors: top 6 + a rolled-up „… още CPV категории" tail.
   const allSectors = sectorRows.results
     .map((s) => {
-      const ref = sectorRef(s.division);
+      const ref = sectorRef(s.division, locale);
       return ref ? { ...ref, valueEur: s.eur } : null;
     })
     .filter(
@@ -338,7 +351,7 @@ export async function getAuthority(
     name: cleanName(row.name),
     eik: authoritySlug(authorityId),
     typeGroup: row.type_group,
-    typeLabel: typeLabel(row.type_group),
+    typeLabel: typeLabel(row.type_group, locale),
     settlement: row.settlement,
     region: row.region,
     spentEur: row.spent_eur,
@@ -354,7 +367,7 @@ export async function getAuthority(
     moreContractors: Math.max(0, row.suppliers - topContractors.length),
     sectors,
     sectorsOther,
-    procedureMix: toProcedureMix(procRows.results),
+    procedureMix: toProcedureMix(procRows.results, locale),
     recentContracts: recent.items,
     topContracts: top.items,
   };
@@ -421,6 +434,7 @@ interface ContractDetailRow {
 export async function getContract(
   db: D1Database,
   contractId: string,
+  locale: Locale,
 ): Promise<ContractRecord | null> {
   const r = await db
     .prepare(
@@ -565,7 +579,7 @@ export async function getContract(
     slug: authoritySlug(r.authority_id),
     name: cleanName(r.authority_name),
     displayName: cleanName(r.authority_name),
-    typeLabel: typeLabel(r.authority_type_group),
+    typeLabel: typeLabel(r.authority_type_group, locale),
     settlement: r.authority_settlement,
     eik: authoritySlug(r.authority_id),
     sector: null,
@@ -580,7 +594,7 @@ export async function getContract(
     typeLabel: null,
     settlement: r.bidder_settlement,
     eik: r.bidder_eik,
-    sector: sectorRef(compTotals?.primary_sector ?? null),
+    sector: sectorRef(compTotals?.primary_sector ?? null, locale),
     totalContracts: compTotals?.contracts ?? 0,
     totalEur: compTotals?.won_eur ?? 0,
   };
@@ -605,8 +619,7 @@ export async function getContract(
   // more awarded contracts than lots, the extra awards are call-offs against one framework / DSP
   // procedure rather than one-contract-per-lot — so the procedure-level estimate is the whole
   // framework ceiling, not this single award. `frameworkAwards` carries the award count when so, else null.
-  const frameworkAwards =
-    r.tender_awards > Math.max(r.num_lots ?? 0, 1) ? r.tender_awards : null;
+  const frameworkAwards = r.tender_awards > Math.max(r.num_lots ?? 0, 1) ? r.tender_awards : null;
 
   const detail: ContractDetail = {
     id: contractSlug(r.id),
@@ -624,8 +637,11 @@ export async function getContract(
     contractKind: r.contract_kind,
     cpvCode: r.cpv_code,
     cpvDescription: r.cpv_description,
-    sector: sectorRef(r.cpv_code ? r.cpv_code.slice(0, 2) : null),
-    procedureLabel: r.procedure_type === 'неизвестна' ? 'Неизвестна' : r.procedure_type,
+    sector: sectorRef(r.cpv_code ? r.cpv_code.slice(0, 2) : null, locale),
+    procedureLabel:
+      r.procedure_type === 'неизвестна'
+        ? pickLabel(procedureGroup('неизвестна'), locale)
+        : r.procedure_type,
     bidsReceived: r.bids_received,
     bidsRejected: r.bids_rejected,
     bidsSme: r.bids_sme,

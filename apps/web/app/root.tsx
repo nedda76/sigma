@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react';
 import {
   isRouteErrorResponse,
-  Link,
   Links,
   Meta,
   Outlet,
@@ -23,6 +22,17 @@ import { PageHeader } from './components/PageHeader';
 import { getCoverageMeta } from './lib/coverage';
 import { withDbRetry } from './lib/retry';
 import stylesheet from './app.css?url';
+import { Link } from './i18n/Link';
+import { LocaleProvider, useTranslation } from './i18n/context';
+import {
+  getLocale,
+  swapLocalePath,
+  HTML_LANG,
+  OG_LOCALE,
+  LOCALES,
+  type Locale,
+} from './i18n/locale';
+import { makeT } from './i18n/t';
 
 // The editorial design uses a system serif/mono/sans stack (see app.css @theme) — no webfont request.
 // Brand favicons (white „С“ on the deep-red tile) live in /public; declare them so the head is explicit.
@@ -49,7 +59,7 @@ export async function loader({ context, request }: Route.LoaderArgs) {
   // Wrapped like the leaf loaders: this chrome read runs on every route, so a transient D1 fault
   // here would 500 the whole page (incl. the entity pages this PR targets) without the retry.
   const coverage = await withDbRetry(() => getCoverageMeta(context.cloudflare.env.DB));
-  return { ...coverage, origin: url.origin };
+  return { ...coverage, origin: url.origin, locale: getLocale(request) };
 }
 
 // Scroll-restoration key for list pages. Filters and sort live in the query string under a stable
@@ -64,9 +74,17 @@ function scrollKey(location: { pathname: string; search: string }): string {
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const nonce = useNonce();
-  const rootData = useRouteLoaderData('root') as { origin?: string } | undefined;
+  const location = useLocation();
+  // Locale + origin come from the root loader so SSR and hydration agree; fall back to the URL prefix
+  // for the error path, where root loader data may be absent. Derived ONCE here and handed down through
+  // LocaleProvider, so App and ErrorBoundary (both rendered as `children`) share one memoized translator.
+  const rootData = useRouteLoaderData('root') as { origin?: string; locale?: Locale } | undefined;
+  const locale = rootData?.locale ?? getLocale(location.pathname);
+  const t = makeT(locale);
   const origin = rootData?.origin;
   const imageUrl = origin ? `${origin}/og.png` : undefined;
+  // Localised JSON-LD: language + description follow the active locale; the brand name and its
+  // expansion stay as the registered (Bulgarian) proper noun. Search action targets the locale path.
   const schemaOrg = origin
     ? JSON.stringify({
         '@context': 'https://schema.org',
@@ -84,12 +102,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
             '@id': `${origin}/#website`,
             url: origin,
             name: 'СИГМА',
-            description: 'Платформа за прозрачност на обществените поръчки в България',
-            inLanguage: 'bg',
+            description: t('og.siteDescription'),
+            inLanguage: HTML_LANG[locale],
             publisher: { '@id': `${origin}/#organization` },
             potentialAction: {
               '@type': 'SearchAction',
-              target: { '@type': 'EntryPoint', urlTemplate: `${origin}/search?q={search_term_string}` },
+              target: {
+                '@type': 'EntryPoint',
+                urlTemplate: `${origin}${locale === 'en' ? '/en' : ''}/search?q={search_term_string}`,
+              },
               'query-input': 'required name=search_term_string',
             },
           },
@@ -97,22 +118,22 @@ export function Layout({ children }: { children: React.ReactNode }) {
       })
     : null;
   return (
-    <html lang="bg">
+    <html lang={HTML_LANG[locale]}>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta property="og:type" content="website" />
         <meta property="og:site_name" content="СИГМА" />
-        <meta property="og:locale" content="bg_BG" />
+        <meta property="og:locale" content={OG_LOCALE[locale]} />
+        {LOCALES.filter((loc) => loc !== locale).map((loc) => (
+          <meta key={loc} property="og:locale:alternate" content={OG_LOCALE[loc]} />
+        ))}
         {imageUrl && (
           <>
             <meta property="og:image" content={imageUrl} />
             <meta property="og:image:width" content="1200" />
             <meta property="og:image:height" content="630" />
-            <meta
-              property="og:image:alt"
-              content="СИГМА — платформа за прозрачност на обществените поръчки"
-            />
+            <meta property="og:image:alt" content={t('og.imageAlt')} />
             <meta property="og:image:type" content="image/png" />
           </>
         )}
@@ -121,15 +142,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Meta />
         <Links />
         {schemaOrg && (
-          <script
-            type="application/ld+json"
-            dangerouslySetInnerHTML={{ __html: schemaOrg }}
-          />
+          <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: schemaOrg }} />
         )}
         <script src="/assets/accessibility/accessibility.js" defer />
       </head>
       <body>
-        {children}
+        <LocaleProvider locale={locale}>{children}</LocaleProvider>
         <ScrollRestoration nonce={nonce} getKey={scrollKey} />
         <Scripts nonce={nonce} />
       </body>
@@ -175,11 +193,28 @@ export default function App({ loaderData }: Route.ComponentProps) {
     return () => window.cancelAnimationFrame(frame);
   }, [location.key, navigationType]);
 
+  const t = useTranslation();
+  const { origin } = loaderData;
+
   return (
     <>
+      <link rel="canonical" href={`${origin}${location.pathname}${location.search}`} />
+      {LOCALES.map((loc) => (
+        <link
+          key={loc}
+          rel="alternate"
+          hrefLang={HTML_LANG[loc]}
+          href={`${origin}${swapLocalePath(location.pathname, loc)}${location.search}`}
+        />
+      ))}
+      <link
+        rel="alternate"
+        hrefLang="x-default"
+        href={`${origin}${swapLocalePath(location.pathname, 'bg')}${location.search}`}
+      />
       <RouteProgress />
       <a className="skip" href="#main">
-        Към съдържанието
+        {t('a11y.skip')}
       </a>
       <SiteHeader />
       <Outlet />
@@ -195,27 +230,29 @@ export default function App({ loaderData }: Route.ComponentProps) {
 
 // Errors render inside the chrome so a 404/500 still looks like СИГМА and keeps the nav.
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
+  // Locale comes from LocaleProvider in Layout (which wraps this boundary too), so there is no separate
+  // URL-prefix derivation here — one source of truth for the whole document.
+  const t = useTranslation();
   const is404 = isRouteErrorResponse(error) && error.status === 404;
-  const kicker = is404 ? 'Грешка 404' : 'Грешка';
-  const title = is404 ? 'Страницата не е намерена' : 'Възникна грешка';
-  const lede = is404
-    ? 'Такъв запис няма или адресът се е променил. Започни от търсенето или от някой от списъците.'
-    : 'Нещо се обърка при зареждането. Опитай пак или се върни в началото.';
+  const kicker = is404 ? t('error.kicker404') : t('error.kicker');
+  const title = is404 ? t('error.title404') : t('error.title');
+  const lede = is404 ? t('error.lede404') : t('error.lede');
   const stack = import.meta.env.DEV && error instanceof Error ? error.stack : undefined;
 
   return (
     <>
       {/* The boundary bypasses route `meta`, so set the document title here (React hoists it). */}
-      <title>{is404 ? 'Страницата не е намерена — СИГМА' : 'Грешка — СИГМА'}</title>
+      <title>{is404 ? t('error.docTitle404') : t('error.docTitle')}</title>
       <a className="skip" href="#main">
-        Към съдържанието
+        {t('a11y.skip')}
       </a>
       <SiteHeader />
       <main id="main">
         <PageHeader kicker={kicker} title={title} lede={lede} />
         <p className="muted">
-          <Link to="/">Начало</Link> · <Link to="/companies">Компании</Link> ·{' '}
-          <Link to="/authorities">Институции</Link> · <Link to="/contracts">Договори</Link>
+          <Link to="/">{t('nav.home')}</Link> · <Link to="/companies">{t('nav.companies')}</Link> ·{' '}
+          <Link to="/authorities">{t('nav.authorities')}</Link> ·{' '}
+          <Link to="/contracts">{t('nav.contracts')}</Link>
         </p>
         {stack && (
           <pre className="mono small error-stack">

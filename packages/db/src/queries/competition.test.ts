@@ -65,13 +65,13 @@ function fakeDb(capture?: string[]): D1Database {
 
 describe('getCompetition', () => {
   it('computes the headline single-offer shares by count and by value', async () => {
-    const { totals } = await getCompetition(fakeDb(), {});
+    const { totals } = await getCompetition(fakeDb(), {}, 'bg');
     expect(totals.singleOfferShare).toBeCloseTo(0.3); // 3 / 10
     expect(totals.singleOfferValueShare).toBeCloseTo(0.4); // 400 / 1000
   });
 
   it('maps the single-offer leaderboard: slug, type label, per-row share', async () => {
-    const { bySingleOffer } = await getCompetition(fakeDb(), {});
+    const { bySingleOffer } = await getCompetition(fakeDb(), {}, 'bg');
     expect(bySingleOffer[0]).toMatchObject({
       slug: '111',
       name: 'Община Тест',
@@ -81,12 +81,12 @@ describe('getCompetition', () => {
   });
 
   it('passes the HHI through on the concentration leaderboard', async () => {
-    const { byConcentration } = await getCompetition(fakeDb(), {});
+    const { byConcentration } = await getCompetition(fakeDb(), {}, 'bg');
     expect(byConcentration[0]).toMatchObject({ slug: '222', suppliers: 3, hhi: 0.7 });
   });
 
   it('ranks recurring pairs and resolves the company display name', async () => {
-    const { topPairs } = await getCompetition(fakeDb(), {});
+    const { topPairs } = await getCompetition(fakeDb(), {}, 'bg');
     expect(topPairs[0]).toMatchObject({
       rank: 1,
       authoritySlug: '111',
@@ -97,11 +97,11 @@ describe('getCompetition', () => {
 
   it('reads flow_pairs when unfiltered, but aggregates from base tables when filtered', async () => {
     const unfiltered: string[] = [];
-    await getCompetition(fakeDb(unfiltered), {});
+    await getCompetition(fakeDb(unfiltered), {}, 'bg');
     expect(unfiltered.some((s) => s.includes('FROM flow_pairs'))).toBe(true);
 
     const filtered: string[] = [];
-    await getCompetition(fakeDb(filtered), { sector: '45' });
+    await getCompetition(fakeDb(filtered), { sector: '45' }, 'bg');
     expect(filtered.some((s) => s.includes('FROM flow_pairs'))).toBe(false);
     expect(filtered.some((s) => s.includes('JOIN bidders b'))).toBe(true);
   });
@@ -122,7 +122,7 @@ describe('getCompetition', () => {
         };
       },
     } as unknown as D1Database;
-    const { totals, bySingleOffer } = await getCompetition(emptyDb, {});
+    const { totals, bySingleOffer } = await getCompetition(emptyDb, {}, 'bg');
     expect(totals.singleOfferShare).toBe(0);
     expect(totals.singleOfferValueShare).toBe(0);
     expect(bySingleOffer).toEqual([]);

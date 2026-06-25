@@ -11,8 +11,8 @@ import type {
   SankeyRibbon,
   SectorRef,
 } from '@sigma/api-contract';
-import { CPV_SECTORS } from '@sigma/config';
-import { cleanName, entityName, money } from '@sigma/shared';
+import { CPV_SECTORS, pickShort } from '@sigma/config';
+import { cleanName, entityName, money, type Locale } from '@sigma/shared';
 import { authoritySlug, companySlug } from './identity';
 
 export interface FlowsParams {
@@ -181,7 +181,7 @@ function buildSankey(pairs: PairRow[]): SankeyLayout {
 
 const SECTOR_OPTION_LIMIT = 12;
 
-export async function getFlows(db: D1Database, p: FlowsParams): Promise<FlowsData> {
+export async function getFlows(db: D1Database, p: FlowsParams, locale: Locale): Promise<FlowsData> {
   const top = p.top === 50 ? 50 : 20;
   const rows = await topPairs(db, p, top);
   const pairs: FlowPair[] = rows.map((r, i) => {
@@ -209,7 +209,7 @@ export async function getFlows(db: D1Database, p: FlowsParams): Promise<FlowsDat
   const sectors: SectorRef[] = sectorRows.results
     .map((r) => byCode.get(r.division))
     .filter((s): s is (typeof CPV_SECTORS)[number] => Boolean(s))
-    .map((s) => ({ code: s.code, label: s.short ?? s.label, short: s.short ?? s.label }));
+    .map((s) => ({ code: s.code, label: pickShort(s, locale), short: pickShort(s, locale) }));
 
   return {
     pairs,

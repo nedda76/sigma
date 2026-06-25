@@ -13,8 +13,8 @@ import type {
   CompetitionTotals,
   SectorRef,
 } from '@sigma/api-contract';
-import { CPV_SECTORS } from '@sigma/config';
-import { cleanName, entityName } from '@sigma/shared';
+import { CPV_SECTORS, pickShort } from '@sigma/config';
+import { cleanName, entityName, type Locale } from '@sigma/shared';
 import { authoritySlug, companySlug } from './identity';
 import { typeLabel } from './rows';
 
@@ -101,6 +101,7 @@ async function authoritiesBySingleOffer(
   db: D1Database,
   p: CompetitionParams,
   top: number,
+  locale: Locale,
 ): Promise<CompetitionAuthority[]> {
   const s = scope(p);
   const where = ['c.bids_received IS NOT NULL', 'c.bids_received >= 1', ...s.where];
@@ -124,7 +125,7 @@ async function authoritiesBySingleOffer(
   return results.map((r) => ({
     slug: authoritySlug(r.authority_id),
     name: cleanName(r.name),
-    typeLabel: typeLabel(r.type_group),
+    typeLabel: typeLabel(r.type_group, locale),
     contracts: r.contracts,
     singleOffer: r.single_offer,
     singleOfferShare: r.contracts > 0 ? r.single_offer / r.contracts : 0,
@@ -150,6 +151,7 @@ async function authoritiesByConcentration(
   db: D1Database,
   p: CompetitionParams,
   top: number,
+  locale: Locale,
 ): Promise<CompetitionConcentration[]> {
   const s = scope(p);
   // Site-wide value basis (amount_eur IS NOT NULL), matching the rollups and the other panels.
@@ -184,7 +186,7 @@ async function authoritiesByConcentration(
   return results.map((r) => ({
     slug: authoritySlug(r.authority_id),
     name: cleanName(r.name),
-    typeLabel: typeLabel(r.type_group),
+    typeLabel: typeLabel(r.type_group, locale),
     suppliers: r.suppliers,
     contracts: r.contracts,
     valueEur: r.value_eur,
@@ -258,7 +260,7 @@ async function topRecurringPairs(
 }
 
 // Sector select options: the present sectors by value (curated label), capped. Same source as getFlows.
-async function sectorOptions(db: D1Database): Promise<SectorRef[]> {
+async function sectorOptions(db: D1Database, locale: Locale): Promise<SectorRef[]> {
   const { results } = await db
     .prepare(`SELECT division FROM sector_totals ORDER BY value_eur DESC LIMIT ?`)
     .bind(SECTOR_OPTION_LIMIT)
@@ -267,22 +269,23 @@ async function sectorOptions(db: D1Database): Promise<SectorRef[]> {
   return results
     .map((r) => byCode.get(r.division))
     .filter((s): s is (typeof CPV_SECTORS)[number] => Boolean(s))
-    .map((s) => ({ code: s.code, label: s.short ?? s.label, short: s.short ?? s.label }));
+    .map((s) => ({ code: s.code, label: pickShort(s, locale), short: pickShort(s, locale) }));
 }
 
 export async function getCompetition(
   db: D1Database,
   p: CompetitionParams,
+  locale: Locale,
 ): Promise<CompetitionData> {
   const top = p.top === MAX_TOP ? MAX_TOP : DEFAULT_TOP;
   const minContracts = p.minContracts ?? DEFAULT_MIN_CONTRACTS;
   const scoped = { ...p, minContracts };
   const [totals, bySingleOffer, byConcentration, topPairs, sectors] = await Promise.all([
     competitionTotals(db, p),
-    authoritiesBySingleOffer(db, scoped, top),
-    authoritiesByConcentration(db, scoped, top),
+    authoritiesBySingleOffer(db, scoped, top, locale),
+    authoritiesByConcentration(db, scoped, top, locale),
     topRecurringPairs(db, p, top),
-    sectorOptions(db),
+    sectorOptions(db, locale),
   ]);
   return {
     totals,

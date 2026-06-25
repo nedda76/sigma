@@ -1,5 +1,5 @@
-import { Link } from 'react-router';
-import { count, date, money, moneyBare, pct } from '@sigma/shared';
+import { Link } from '../i18n/Link';
+import { count, date, money, pct } from '@sigma/shared';
 import { getHomeData } from '@sigma/db';
 import type { ContractListItem } from '@sigma/api-contract';
 import type { Route } from './+types/home';
@@ -11,59 +11,66 @@ import { OwnershipChip } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageEndYear, coveragePartialNote, coverageRange } from '../lib/coverage';
 import { seoMeta } from '../lib/meta';
+import { useTranslation, useLocale } from '../i18n/context';
+import { makeT } from '../i18n/t';
+import { getLocale } from '../i18n/locale';
 
-const metaTitle = 'СИГМА — Платформа за прозрачност на обществените поръчки';
-const metaDescription =
-  'СИГМА показва как държавните институции и общините харчат парите на данъкоплатците чрез обществени поръчки във всички сектори. Без регистрация. Зад всяко число стои конкретен договор.';
-
-export function meta({ matches }: Route.MetaArgs) {
-  return seoMeta({ matches, path: '/', title: metaTitle, description: metaDescription });
+export function meta({ matches, location }: Route.MetaArgs) {
+  const t = makeT(getLocale(location.pathname));
+  return seoMeta({
+    matches,
+    path: '/',
+    title: t('home.metaTitle'),
+    description: t('home.metaDescription'),
+  });
 }
 
 export function headers() {
   return { 'Cache-Control': publicCache(3600) };
 }
 
-export async function loader({ context }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const { env } = context.cloudflare;
   // Identical for every visitor between refreshes — the `Cache-Control` above (publicCache(3600))
   // memoises this response at the edge; no separate data cache.
-  return getHomeData(env.DB);
+  return getHomeData(env.DB, getLocale(request));
 }
 
 function SingleOfferTable({ items, allHref }: { items: ContractListItem[]; allHref: string }) {
-  if (items.length === 0) return <p className="small muted">Няма данни за този изглед.</p>;
+  const t = useTranslation();
+  const locale = useLocale();
+  if (items.length === 0) return <p className="small muted">{t('home.noData')}</p>;
   return (
     <>
       <div className="table-wrap tbl-cards">
         <table>
-          <caption className="sr-only">Поръчки с една оферта</caption>
+          <caption className="sr-only">{t('home.singleOfferCaption')}</caption>
           <thead>
             <tr>
-              <th scope="col">Дата</th>
-              <th scope="col">Договор</th>
-              <th scope="col">Възложител · Изпълнител</th>
+              <th scope="col">{t('home.thDate')}</th>
+              <th scope="col">{t('home.thContract')}</th>
+              <th scope="col">{t('home.thParties')}</th>
               <th scope="col" className="num">
-                Стойност (€)
+                {t('home.thValue')}
               </th>
             </tr>
           </thead>
           <tbody>
             {items.map((c) => (
               <tr key={c.id}>
-                <td className="nowrap" data-label="Дата">
-                  {date(c.signedAt)}
+                <td className="nowrap" data-label={t('home.thDate')}>
+                  {date(c.signedAt, locale)}
                 </td>
-                <td className="cell-title" data-label="Договор">
+                <td className="cell-title" data-label={t('home.thContract')}>
                   <Link to={`/contracts/${c.id}`}>{c.subject}</Link>
                 </td>
-                <td data-label="Възложител · Изпълнител">
+                <td data-label={t('home.thParties')}>
                   <Link to={`/authorities/${c.authoritySlug}`}>{c.authorityName}</Link>
                   {' · '}
                   <Link to={`/companies/${c.bidderSlug}`}>{c.bidderDisplayName}</Link>
                 </td>
-                <td className="money" data-label="Стойност (€)">
-                  {c.valueEur != null ? moneyBare(c.valueEur) : '—'}
+                <td className="money" data-label={t('home.thValue')}>
+                  {c.valueEur != null ? money(c.valueEur, locale) : '—'}
                 </td>
               </tr>
             ))}
@@ -71,7 +78,7 @@ function SingleOfferTable({ items, allHref }: { items: ContractListItem[]; allHr
         </table>
       </div>
       <p className="small muted mt-8">
-        <Link to={allHref}>Виж всички →</Link>
+        <Link to={allHref}>{t('home.viewAll')}</Link>
       </p>
     </>
   );
@@ -82,12 +89,16 @@ function SingleOfferTable({ items, allHref }: { items: ContractListItem[]; allHr
 // bucket — the established convention for the non-competitive slice — so it reads as a breakdown of
 // the total, not a progress track.
 function SingleOfferPortion({ valueEur, totalEur }: { valueEur: number; totalEur: number }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const ratio = Math.min(1, Math.max(0, totalEur > 0 ? valueEur / totalEur : 0));
   return (
     <div className="so-portion">
       <p className="so-portion-head">
-        <span className="so-portion-pct">{pct(ratio)}</span> от стойността на всички поръчки са по
-        договори с <em>една оферта</em>.
+        <span className="so-portion-pct">{pct(ratio, undefined, locale)}</span>
+        {t('home.soPortionPre')}
+        <em>{t('home.soPortionEm')}</em>
+        {t('home.soPortionPost')}
       </p>
       <div className="hbar" aria-hidden="true">
         <span style={{ width: `${(ratio * 100).toFixed(1)}%`, background: 'var(--accent)' }} />
@@ -96,7 +107,7 @@ function SingleOfferPortion({ valueEur, totalEur }: { valueEur: number; totalEur
         />
       </div>
       <p className="small muted so-portion-cap">
-        {money(valueEur)} от {money(totalEur)}
+        {t('home.soPortionCap', { value: money(valueEur, locale), total: money(totalEur, locale) })}
       </p>
     </div>
   );
@@ -112,19 +123,23 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     topSingleOffer,
     singleOffer,
   } = loaderData;
+  const t = useTranslation();
+  const locale = useLocale();
   const endYear = coverageEndYear(totals.asOf);
   const range = coverageRange(endYear);
   return (
     <main id="main">
       <div className="hero-panel">
         <PageHeader
-          kicker="Обществени поръчки"
+          kicker={t('home.heroKicker')}
           title={
             <>
-              Къде отиват <em>парите</em> на държавата?
+              {t('home.heroTitlePre')}
+              <em>{t('home.heroTitleEm')}</em>
+              {t('home.heroTitlePost')}
             </>
           }
-          lede="СИГМА показва как държавните институции и общините харчат парите на данъкоплатците чрез обществени поръчки във всички сектори. Без регистрация, без тълкуване. Зад всяко число стои конкретен договор — можеш да го отвориш."
+          lede={t('home.heroLede')}
         >
           <SmartSearch variant="hero" />
         </PageHeader>
@@ -139,37 +154,39 @@ export default function Home({ loaderData }: Route.ComponentProps) {
       </div>
 
       <TotalsStrip
-        label="Накратко"
+        label={t('home.totalsLabel')}
         totals={[
-          { num: count(totals.contracts), label: 'Договори и обособени позиции' },
-          { num: money(totals.valueEur), label: 'Обща стойност на договорите' },
-          { num: count(totals.authorities), label: 'Институции възложители' },
-          { num: count(totals.bidders), label: 'Компании изпълнители' },
+          { num: count(totals.contracts, locale), label: t('home.totalsContracts') },
+          { num: money(totals.valueEur, locale), label: t('home.totalsValue') },
+          { num: count(totals.authorities, locale), label: t('home.totalsAuthorities') },
+          { num: count(totals.bidders, locale), label: t('home.totalsBidders') },
         ]}
       />
       <p className="small muted coverage-note">
-        Обхват: {coveragePartialNote(endYear)}
-        {totals.asOf ? `, последен договор ${date(totals.asOf)}` : ''}.
+        {totals.asOf
+          ? t('home.coverageWithLast', {
+              note: coveragePartialNote(endYear),
+              date: date(totals.asOf, locale),
+            })
+          : t('home.coverageNoLast', { note: coveragePartialNote(endYear) })}
       </p>
 
       <section className="section" aria-labelledby="find-yours">
         <h2 id="find-yours">
-          Най-активните <em>институции</em>
+          {t('home.authoritiesTitlePre')}
+          <em>{t('home.authoritiesTitleEm')}</em>
         </h2>
-        <p className="section-hint">
-          Започни оттук, ако те интересува конкретно министерство, община, агенция или болница.
-          Подредени по обема на поръчките за {range} г.
-        </p>
+        <p className="section-hint">{t('home.authoritiesHint', { range })}</p>
         <div className="two-col">
           <div>
-            <p className="subhead">Министерства, агенции и държавни предприятия</p>
+            <p className="subhead">{t('home.subheadMinistries')}</p>
             <RankedBars items={topMinistries} />
           </div>
           <div>
-            <p className="subhead">Общини</p>
+            <p className="subhead">{t('home.subheadMunicipalities')}</p>
             <RankedBars items={topMunicipalities} />
             <p className="small muted mt-8">
-              <Link to="/authorities">Виж пълния списък на институциите →</Link>
+              <Link to="/authorities">{t('home.authoritiesViewAll')}</Link>
             </p>
           </div>
         </div>
@@ -177,30 +194,28 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
       <section className="section" aria-labelledby="top-bene">
         <h2 id="top-bene">
-          Топ 10 печеливши <em>компании</em>
+          {t('home.companiesTitlePre')}
+          <em>{t('home.companiesTitleEm')}</em>
         </h2>
         <p className="section-hint">
-          Компании, подредени по обща стойност на спечелените договори за {range}. Обединенията
-          (ДЗЗД/консорциуми) се броят като един изпълнител.{' '}
-          <Link to="/companies">Виж пълния списък →</Link>
+          {t('home.companiesHint', { range })}
+          <Link to="/companies">{t('home.companiesViewAll')}</Link>
         </p>
         <div className="table-wrap">
           <table>
-            <caption className="sr-only">
-              Топ печеливши компании по стойност на спечелените договори
-            </caption>
+            <caption className="sr-only">{t('home.companiesCaption')}</caption>
             <thead>
               <tr>
-                <th scope="col">#</th>
-                <th scope="col">Компания</th>
+                <th scope="col">{t('home.thRank')}</th>
+                <th scope="col">{t('home.thCompany')}</th>
                 <th scope="col" className="num">
-                  Спечелено (€)
+                  {t('home.thWon')}
                 </th>
                 <th scope="col" className="num">
-                  Договори
+                  {t('home.thContracts')}
                 </th>
                 <th scope="col" className="num">
-                  Институции
+                  {t('home.thAuthorities')}
                 </th>
               </tr>
             </thead>
@@ -213,10 +228,10 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                     <br />
                     <span className="small muted">
                       {c.kind === 'consortium' ? (
-                        <span className="flag soft">обединение</span>
+                        <span className="flag soft">{t('home.consortiumFlag')}</span>
                       ) : (
                         <>
-                          {c.eik ? `ЕИК ${c.eik}` : 'непотвърден ЕИК'}
+                          {c.eik ? t('home.eik', { eik: c.eik }) : t('home.unconfirmedEik')}
                           {c.sector ? ` · ${c.sector.short}` : ''}
                         </>
                       )}
@@ -228,9 +243,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                       )}
                     </span>
                   </td>
-                  <td className="money">{moneyBare(c.wonEur)}</td>
-                  <td className="money">{count(c.contracts)}</td>
-                  <td className="money">{count(c.authorities)}</td>
+                  <td className="money">{money(c.wonEur, locale)}</td>
+                  <td className="money">{count(c.contracts, locale)}</td>
+                  <td className="money">{count(c.authorities, locale)}</td>
                 </tr>
               ))}
             </tbody>
@@ -240,18 +255,12 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
       <section className="section" aria-labelledby="single-offer">
         <h2 id="single-offer">
-          Поръчки с <em>една оферта</em>
+          {t('home.singleOfferTitlePre')}
+          <em>{t('home.singleOfferTitleEm')}</em>
         </h2>
-        <p className="section-hint">
-          Една оферта означава липса на ценова конкуренция. Ето поръчките с един участник —
-          подредени по време или по стойност.
-        </p>
+        <p className="section-hint">{t('home.singleOfferHint')}</p>
         <SingleOfferPortion valueEur={singleOffer.valueEur} totalEur={totals.valueEur} />
-        <div
-          className="tabset"
-          role="radiogroup"
-          aria-label="Подреждане на поръчките с една оферта"
-        >
+        <div className="tabset" role="radiogroup" aria-label={t('home.singleOfferTabsLabel')}>
           <input
             type="radio"
             name="single-offer"
@@ -262,10 +271,10 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           <input type="radio" name="single-offer" id="so-top" className="tab-input" />
           <div className="tab-labels">
             <label id="tab-so-recent" htmlFor="so-recent">
-              Скорошни
+              {t('home.tabRecent')}
             </label>
             <label id="tab-so-top" htmlFor="so-top">
-              Най-големи по стойност
+              {t('home.tabTop')}
             </label>
           </div>
           <div className="tab-panel" data-tab="recent" role="group" aria-labelledby="tab-so-recent">
@@ -282,24 +291,19 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
       <section className="section" aria-labelledby="how">
         <h2 id="how">
-          Как да четем <em>данните</em>
+          {t('home.howTitlePre')}
+          <em>{t('home.howTitleEm')}</em>
         </h2>
         <div className="two-col">
           <div>
-            <h3 className="mb-8">Какво показва СИГМА</h3>
-            <p>
-              СИГМА — Система за Интегриран Граждански Мониторинг и Анализ — обединява публични
-              данни от Регистъра на обществените поръчки (АОП / ЦАИС ЕОП): кой какво възлага, на
-              кого и за колко. Зад всяко число тук стоят конкретните договори, които го формират.
-            </p>
+            <h3 className="mb-8">{t('home.howWhatTitle')}</h3>
+            <p>{t('home.howWhatBody')}</p>
           </div>
           <div>
-            <h3 className="mb-8">Основната единица: договорът</h3>
+            <h3 className="mb-8">{t('home.howUnitTitle')}</h3>
             <p>
-              Всяко обобщение тук — обща сума за институция, за компания или поток между двете — се
-              свежда до конкретните възложени договори. „Брой оферти" показваме само като число;
-              самите оферти ги няма в публичните данни.{' '}
-              <Link to="/methodology">Виж методологията →</Link>
+              {t('home.howUnitBody')}
+              <Link to="/methodology">{t('home.methodologyLink')}</Link>
             </p>
           </div>
         </div>

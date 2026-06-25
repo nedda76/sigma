@@ -1,12 +1,13 @@
-import { CPV_SECTORS } from '@sigma/config';
+import { CPV_SECTORS, pickLabel, pickShort } from '@sigma/config';
 import type { SectorRef } from '@sigma/api-contract';
+import type { Locale } from '@sigma/shared';
 
 const BY_CODE = new Map(CPV_SECTORS.map((s) => [s.code, s]));
 
 /** Resolve a 2-digit CPV division to a display SectorRef (label + short name), or null if unknown. */
-export function sectorRef(division: string | null | undefined): SectorRef | null {
+export function sectorRef(division: string | null | undefined, locale: Locale): SectorRef | null {
   if (!division) return null;
   const s = BY_CODE.get(division);
   if (!s) return null;
-  return { code: s.code, label: s.label, short: s.short ?? s.label };
+  return { code: s.code, label: pickLabel(s, locale), short: pickShort(s, locale) };
 }

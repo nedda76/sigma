@@ -22,29 +22,92 @@ const MONTHS_BG = [
   'декември',
 ];
 
-/** Format a number to `dp` decimals with a comma decimal sep; optionally drop a trailing „,0". */
-function dec(n: number, dp: number, stripZeros: boolean): string {
+// English month names — hand-rolled to match the policy above (workerd Intl is not relied on for
+// either locale, so display stays deterministic across runtimes).
+const MONTHS_EN = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+const MONTHS_EN_SHORT = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+/** The locales the interface ships in. Bulgarian is the source/default; English is the second. */
+export type Locale = 'bg' | 'en';
+export const LOCALES: readonly Locale[] = ['bg', 'en'];
+export const DEFAULT_LOCALE: Locale = 'bg';
+
+// Per-locale display conventions. EUR-only throughout (see header note). Bulgarian: decimal comma,
+// NBSP thousands, magnitude words хил./млн./млрд. English: decimal point, comma thousands, compact
+// magnitude suffixes k/M/bn glued to the number. The € stays a suffix in both for a consistent column.
+const FORMATS = {
+  bg: {
+    months: MONTHS_BG,
+    monthsShort: MONTHS_BG,
+    decimal: ',',
+    thousands: NBSP,
+    mag: { k: 'хил.', m: 'млн.', b: 'млрд.' },
+    magGap: true,
+  },
+  en: {
+    months: MONTHS_EN,
+    monthsShort: MONTHS_EN_SHORT,
+    decimal: '.',
+    thousands: ',',
+    mag: { k: 'k', m: 'M', b: 'bn' },
+    magGap: false,
+  },
+} as const satisfies Record<Locale, unknown>;
+
+/** Format a number to `dp` decimals with the given decimal sep; optionally drop a trailing „,0". */
+function dec(n: number, dp: number, stripZeros: boolean, decimal = ','): string {
   let s = n.toFixed(dp);
   if (stripZeros && s.includes('.')) s = s.replace(/0+$/, '').replace(/\.$/, '');
-  return s.replace('.', ',');
+  return s.replace('.', decimal);
 }
 
 function rounded(n: number, dp: number): number {
   return Number(n.toFixed(dp));
 }
 
-function moneyBody(eur: number, withUnit: boolean): string {
+function moneyBody(eur: number, withUnit: boolean, locale: Locale = 'bg'): string {
+  const f = FORMATS[locale];
+  const gap = f.magGap ? NBSP : '';
   const v = Math.abs(eur);
   const roundedEur = Math.round(v);
   const u = withUnit ? `${NBSP}€` : '';
   let body: string;
   if (roundedEur < 1000) body = `${roundedEur}${u}`;
-  else if (Math.round(v / 1e3) < 1000) body = `${Math.round(v / 1e3)}${NBSP}хил.${u}`;
-  else if (rounded(v / 1e6, 1) < 1000) body = `${dec(v / 1e6, 1, true)}${NBSP}млн.${u}`;
+  else if (Math.round(v / 1e3) < 1000) body = `${Math.round(v / 1e3)}${gap}${f.mag.k}${u}`;
+  else if (rounded(v / 1e6, 1) < 1000)
+    body = `${dec(v / 1e6, 1, true, f.decimal)}${gap}${f.mag.m}${u}`;
   else {
     const b = v / 1e9;
     const useTwoDecimals = rounded(b, 2) < 10;
-    body = `${useTwoDecimals ? dec(b, 2, false) : dec(b, 1, true)}${NBSP}млрд.${u}`;
+    const num = useTwoDecimals ? dec(b, 2, false, f.decimal) : dec(b, 1, true, f.decimal);
+    body = `${num}${gap}${f.mag.b}${u}`;
   }
   return body;
 }
@@ -55,10 +118,10 @@ function moneyBody(eur: number, withUnit: boolean): string {
  * млрд." and „4,58 млрд." both read right). Returns „—" for null/NaN — callers suppress suspect rows
  * (NULL amount_eur) upstream rather than pass a 0 here.
  */
-export function money(eur: number | null | undefined): string {
+export function money(eur: number | null | undefined, locale: Locale = 'bg'): string {
   if (eur == null || !Number.isFinite(eur)) return EM_DASH;
   const roundedEur = Math.round(Math.abs(eur));
-  const body = moneyBody(eur, true);
+  const body = moneyBody(eur, true, locale);
   return eur < 0 && roundedEur !== 0 ? `${MINUS}${body}` : body;
 }
 
@@ -66,73 +129,79 @@ export function money(eur: number | null | undefined): string {
  * Like `money()` but without the trailing `€` — for table cells where the column header already
  * carries `(€)`. E.g. `412 хил.` instead of `412 хил. €`.
  */
-export function moneyBare(eur: number | null | undefined): string {
+export function moneyBare(eur: number | null | undefined, locale: Locale = 'bg'): string {
   if (eur == null || !Number.isFinite(eur)) return EM_DASH;
   const roundedEur = Math.round(Math.abs(eur));
-  const body = moneyBody(eur, false);
+  const body = moneyBody(eur, false, locale);
   return eur < 0 && roundedEur !== 0 ? `${MINUS}${body}` : body;
 }
 
-/** Integer with a space thousands separator: `190429` → `190 429`. */
-export function count(n: number | null | undefined): string {
+/** Integer with a locale thousands separator: `190429` → `190 429` (bg) / `190,429` (en). */
+export function count(n: number | null | undefined, locale: Locale = 'bg'): string {
   if (n == null || !Number.isFinite(n)) return EM_DASH;
   const neg = n < 0;
   const s = Math.abs(Math.round(n))
     .toString()
-    .replace(/\B(?=(\d{3})+(?!\d))/g, NBSP);
+    .replace(/\B(?=(\d{3})+(?!\d))/g, FORMATS[locale].thousands);
   return neg ? `${MINUS}${s}` : s;
 }
 
-/** A ratio (0–1) as a percentage: `0.453` → `45,3%`. Default 1 dp, trailing „,0" dropped (`0.78` → `78%`). */
-export function pct(ratio: number | null | undefined, dp = 1): string {
+/** A ratio (0–1) as a percentage: `45,3%` (bg) / `45.3%` (en). Default 1 dp, trailing zero dropped. */
+export function pct(ratio: number | null | undefined, dp = 1, locale: Locale = 'bg'): string {
   if (ratio == null || !Number.isFinite(ratio)) return EM_DASH;
   const roundedMagnitude = rounded(Math.abs(ratio) * 100, dp);
-  const body = `${dec(Math.abs(ratio) * 100, dp, true)}%`;
+  const body = `${dec(Math.abs(ratio) * 100, dp, true, FORMATS[locale].decimal)}%`;
   return ratio < 0 && roundedMagnitude !== 0 ? `${MINUS}${body}` : body;
 }
 
 /** Signed percentage delta with an explicit sign: `-0.233` → `−23,3%`, `0.05` → `+5%`. */
-export function signedPct(ratio: number | null | undefined, dp = 1): string {
+export function signedPct(ratio: number | null | undefined, dp = 1, locale: Locale = 'bg'): string {
   if (ratio == null || !Number.isFinite(ratio)) return EM_DASH;
   const roundedMagnitude = rounded(Math.abs(ratio) * 100, dp);
-  const body = pct(Math.abs(ratio), dp);
+  const body = pct(Math.abs(ratio), dp, locale);
   if (roundedMagnitude === 0) return body;
   if (ratio < 0) return `${MINUS}${body}`;
   if (ratio > 0) return `+${body}`;
   return body;
 }
 
-/** ISO date → `DD.MM.YYYY` (`2024-10-14` → `14.10.2024`). Tolerates a datetime prefix. */
-export function date(iso: string | null | undefined): string {
+/** ISO date → `14.10.2024` (bg) / `14 Oct 2024` (en). Tolerates a datetime prefix. */
+export function date(iso: string | null | undefined, locale: Locale = 'bg'): string {
   if (!iso) return EM_DASH;
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
-  return m ? `${m[3]}.${m[2]}.${m[1]}` : iso;
+  if (!m) return iso;
+  if (locale === 'en')
+    return `${Number(m[3])} ${FORMATS.en.monthsShort[Number(m[2]) - 1] ?? m[2]} ${m[1]}`;
+  return `${m[3]}.${m[2]}.${m[1]}`;
 }
 
-/** ISO date → `октомври 2024` (hand-rolled month names, no Intl). */
-export function monthYear(iso: string | null | undefined): string {
+/** ISO date → `октомври 2024` (bg) / `October 2024` (en) — hand-rolled month names, no Intl. */
+export function monthYear(iso: string | null | undefined, locale: Locale = 'bg'): string {
   if (!iso) return EM_DASH;
   const m = /^(\d{4})-(\d{2})/.exec(iso);
   if (!m) return iso;
-  return `${MONTHS_BG[Number(m[2]) - 1] ?? m[2]} ${m[1]}`;
+  return `${FORMATS[locale].months[Number(m[2]) - 1] ?? m[2]} ${m[1]}`;
 }
 
-/** ISO date → `1 октомври 2024 г.` (long Bulgarian form, used on the contract page). */
-export function longDate(iso: string | null | undefined): string {
+/** ISO date → `1 октомври 2024 г.` (bg) / `1 October 2024` (en), used on the contract page. */
+export function longDate(iso: string | null | undefined, locale: Locale = 'bg'): string {
   if (!iso) return EM_DASH;
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
   if (!m) return iso;
-  return `${Number(m[3])} ${MONTHS_BG[Number(m[2]) - 1] ?? m[2]} ${m[1]} г.`;
+  const month = FORMATS[locale].months[Number(m[2]) - 1] ?? m[2];
+  if (locale === 'en') return `${Number(m[3])} ${month} ${m[1]}`;
+  return `${Number(m[3])} ${month} ${m[1]} г.`;
 }
 
 /** A period like `юли 2020 — май 2026` from first/last ISO dates. */
 export function periodRange(
   first: string | null | undefined,
   last: string | null | undefined,
+  locale: Locale = 'bg',
 ): string {
   if (!first && !last) return EM_DASH;
-  if (first && last) return `${monthYear(first)} — ${monthYear(last)}`;
-  return monthYear(first ?? last);
+  if (first && last) return `${monthYear(first, locale)} — ${monthYear(last, locale)}`;
+  return monthYear(first ?? last, locale);
 }
 
 /** ЕИК passthrough (digits kept verbatim — source truth; the UI renders it in mono). */
@@ -191,13 +260,18 @@ export function isNaturalPersonProfileName(name: string): boolean {
 
 /**
  * Display name for a winning entity. A consortium row holds a `;`-joined member list → show the
- * first member + „и др." (the **Обединение** badge is rendered separately by the caller). Companies
- * pass through unchanged — source names keep their quoting/casing, because that is the source truth.
+ * first member + „и др." / „et al." (the **Обединение** badge is rendered separately by the caller).
+ * Companies pass through unchanged — source names keep their quoting/casing, because that is the
+ * source truth.
  */
-export function entityName(name: string, kind: 'company' | 'consortium'): string {
+export function entityName(
+  name: string,
+  kind: 'company' | 'consortium',
+  locale: Locale = 'bg',
+): string {
   if (kind === 'consortium' && name.includes(';')) {
     const first = (name.split(';')[0] ?? '').trim();
-    if (first) return `${first} и др.`;
+    if (first) return `${first} ${locale === 'en' ? 'et al.' : 'и др.'}`;
   }
   return name;
 }
@@ -206,8 +280,10 @@ export function entityName(name: string, kind: 'company' | 'consortium'): string
  * Bulgarian count word: returns `one` when n ends in 1 but not 11 (1, 21, 101… → договор), else
  * `many` (2, 11, 17… → договора). Returns ONLY the word — format the number separately with count().
  * Use as plural(n, 'договор', 'договора') / plural(n, 'съвпадение', 'съвпадения').
+ * English (locale='en') uses the simple n===1 rule: plural(n, 'contract', 'contracts', 'en').
  */
-export function plural(n: number, one: string, many: string): string {
+export function plural(n: number, one: string, many: string, locale: Locale = 'bg'): string {
+  if (locale === 'en') return Math.abs(n) === 1 ? one : many;
   return n % 10 === 1 && n % 100 !== 11 ? one : many;
 }
 
